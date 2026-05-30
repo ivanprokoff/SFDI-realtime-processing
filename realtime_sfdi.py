@@ -23,10 +23,10 @@ ROI_FRACTION = (0.2, 0.75, 0.35, 0.7)  # top, bottom, left, right
 PATTERN_FREQUENCY_TO_SPATIAL_SCALE = 2 * np.pi / 160.0
 
 FRAME_SAVE_OFFSET = 1
-USE_LEGACY_RED_EXPOSURE = True
-LEGACY_GREEN_EXPOSURE_MS = 66.68
+USE_LEGACY_RED_EXPOSURE = False
 LEGACY_RED_EXPOSURE_MS = 66.68 * 3
 SHOW_DEMOD_DIAGNOSTICS = True
+POST_CAPTURE_DELAY_MS = 20
 
 REFERENCE_ENV_VAR = "SFDI_REFERENCE_ID"
 REFERENCE_PARAM_FILES = ("reference_params.json", "ref_params.json")
@@ -175,8 +175,6 @@ def run_realtime_sfdi_cycle(app: Any) -> RealtimeSFDIResult:
             save_pattern = _save_pattern_for_capture(sequence, capture_index)
             _show_projector_pattern(app, pattern)
             app.after(30)
-            if save_pattern is not None:
-                _set_exposure_for_pattern(app, save_pattern, exposure_state)
 
             raw_img = app.thor_camera.get_frame()
             if raw_img is None:
@@ -186,11 +184,15 @@ def run_realtime_sfdi_cycle(app: Any) -> RealtimeSFDIResult:
                     f"{missing_pattern.save_name}"
                 )
                 _log(app, result.message)
+                _maybe_switch_legacy_red_exposure(app, pattern, exposure_state)
+                app.after(POST_CAPTURE_DELAY_MS)
                 continue
 
             if save_pattern is None:
                 _show_thor_preview(app, raw_img)
                 app.after(15)
+                _maybe_switch_legacy_red_exposure(app, pattern, exposure_state)
+                app.after(POST_CAPTURE_DELAY_MS)
                 continue
 
             cropped_array, _ = _crop_frame(raw_img, CAPTURE_CROP)
@@ -205,6 +207,8 @@ def run_realtime_sfdi_cycle(app: Any) -> RealtimeSFDIResult:
 
             _show_thor_preview(app, raw_img)
             app.after(15)
+            _maybe_switch_legacy_red_exposure(app, pattern, exposure_state)
+            app.after(POST_CAPTURE_DELAY_MS)
 
         app.projection_window.set_background("black")
 
@@ -348,20 +352,18 @@ def _save_pattern_for_capture(
     return sequence[save_index]
 
 
-def _set_exposure_for_pattern(
+def _maybe_switch_legacy_red_exposure(
     app: Any,
-    pattern: RealtimePattern,
-    exposure_state: dict[str, float],
+    displayed_pattern: RealtimePattern,
+    exposure_state: dict[str, Any],
 ) -> None:
-    if not USE_LEGACY_RED_EXPOSURE:
+    if not USE_LEGACY_RED_EXPOSURE or displayed_pattern.color != "red":
+        return
+    if exposure_state.get("legacy_red_switched"):
         return
 
-    target_legacy_ms = LEGACY_RED_EXPOSURE_MS if pattern.color == "red" else LEGACY_GREEN_EXPOSURE_MS
-    if np.isclose(exposure_state.get("legacy_ms", -1.0), target_legacy_ms, rtol=0, atol=1e-9):
-        return
-
-    app.thor_camera.change_exposition(target_legacy_ms)
-    exposure_state["legacy_ms"] = target_legacy_ms
+    app.thor_camera.change_exposition(LEGACY_RED_EXPOSURE_MS)
+    exposure_state["legacy_red_switched"] = True
     exposure_state["value"] = float(getattr(app.thor_camera, "exposure", app.exposure))
 
 
