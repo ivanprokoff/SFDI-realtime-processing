@@ -283,22 +283,24 @@ class App(customtkinter.CTk):
 
     def _setup_sfdi_plots(self):
         """Creates the 2x2 realtime SFDI graph panel."""
-        container = customtkinter.CTkFrame(self, width=400, height=320, corner_radius=0)
-        container.grid(row=2, column=2, rowspan=1, columnspan=1, pady=[10, 10], padx=20, sticky='nswe')
+        container = customtkinter.CTkFrame(self, width=560, height=390, corner_radius=0)
+        container.grid(row=1, column=0, rowspan=2, columnspan=1, pady=(0, 10), padx=20, sticky='nsew')
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
         self.sfdi_plot_container = container
 
         if Figure is None or FigureCanvasTkAgg is None:
             customtkinter.CTkLabel(
                 container,
                 text='Matplotlib is unavailable',
-                width=400,
-                height=320,
+                width=560,
+                height=390,
             ).grid(row=0, column=0, sticky='nsew')
             self.sfdi_canvas = None
             self.sfdi_axes = {}
             return
 
-        self.sfdi_figure = Figure(figsize=(4.8, 3.2), dpi=100, facecolor='#242424')
+        self.sfdi_figure = Figure(figsize=(5.6, 3.9), dpi=100, facecolor='#242424')
         axes = self.sfdi_figure.subplots(2, 2)
         self.sfdi_axes = {
             ('green', 'mua'): axes[0][0],
