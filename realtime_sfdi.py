@@ -21,6 +21,13 @@ RAW_CAMERA_MAX = 1023.0
 CAPTURE_CROP = (100, 900, 0, 800)  # upper, lower, left, right
 ROI_FRACTION = (0.2, 0.75, 0.35, 0.7)  # top, bottom, left, right
 PATTERN_FREQUENCY_TO_SPATIAL_SCALE = 2 * np.pi / 160.0
+
+FRAME_SAVE_OFFSET = 1
+USE_LEGACY_RED_EXPOSURE = True
+LEGACY_GREEN_EXPOSURE_MS = 66.68
+LEGACY_RED_EXPOSURE_MS = 66.68 * 3
+SHOW_DEMOD_DIAGNOSTICS = True
+
 REFERENCE_ENV_VAR = "SFDI_REFERENCE_ID"
 REFERENCE_PARAM_FILES = ("reference_params.json", "ref_params.json")
 DEFAULT_COEFFICIENT_UNITS = "mm^-1"
@@ -149,30 +156,49 @@ def run_realtime_sfdi_cycle(app: Any) -> RealtimeSFDIResult:
         )
 
         app.flag = True
+        exposure_state = {"value": float(app.exposure)}
+        capture_sequence = _capture_sequence_with_offset(sequence)
         external_functions.change_button_state(app, block=True)
-        _log(app, f"SFDI realtime capture started: freq {result.frequency}, green/red, 6 phases")
+        _log(
+            app,
+            f"SFDI realtime capture started: freq {result.frequency}, green/red, "
+            f"6 phases, frame offset {FRAME_SAVE_OFFSET}, "
+            f"legacy red exposure {USE_LEGACY_RED_EXPOSURE}",
+        )
 
-        for pattern in sequence:
+        for capture_index, pattern in enumerate(capture_sequence):
             if not app.flag:
                 result.message = "SFDI realtime stopped by user"
                 _log(app, result.message)
                 break
 
+            save_pattern = _save_pattern_for_capture(sequence, capture_index)
             _show_projector_pattern(app, pattern)
             app.after(30)
+            if save_pattern is not None:
+                _set_exposure_for_pattern(app, save_pattern, exposure_state)
 
             raw_img = app.thor_camera.get_frame()
             if raw_img is None:
-                result.message = f"SFDI realtime missing frame: {pattern.color} {pattern.save_name}"
+                missing_pattern = save_pattern or pattern
+                result.message = (
+                    f"SFDI realtime missing frame: {missing_pattern.color} "
+                    f"{missing_pattern.save_name}"
+                )
                 _log(app, result.message)
+                continue
+
+            if save_pattern is None:
+                _show_thor_preview(app, raw_img)
+                app.after(15)
                 continue
 
             cropped_array, _ = _crop_frame(raw_img, CAPTURE_CROP)
             roi_array = _apply_roi(cropped_array, ROI_FRACTION)
             roi_image = PILImage.fromarray(roi_array)
-            frame_map[(pattern.color, pattern.phase)] = roi_array
+            frame_map[(save_pattern.color, save_pattern.phase)] = roi_array
 
-            file_path = Path(app.current_directory) / pattern.color / f"{pattern.save_name}.TIF"
+            file_path = Path(app.current_directory) / save_pattern.color / f"{save_pattern.save_name}.TIF"
             file_path.parent.mkdir(parents=True, exist_ok=True)
             roi_image.save(file_path)
             result.saved_files.append(file_path)
@@ -252,6 +278,7 @@ def process_realtime_frames(
 
         raw_demod = squeezer.process(smoother.process(demodulator.process(raw_stack)))
         reference_demod = squeezer.process(smoother.process(demodulator.process(reference_stack)))
+        demod_diagnostics = _show_demod_diagnostics(raw_demod, reference_demod)
 
         expected_frequencies = [0, spatial_frequency]
         if list(raw_demod.spatial_frequencies) != expected_frequencies:
@@ -275,10 +302,16 @@ def process_realtime_frames(
     except Exception as exc:
         return {}, f"pipeline error: {exc}"
 
-    return metrics, (
-        f"reference {reference_dir.name}, model MCML, pattern freq {frequency}, "
-        f"spatial freq {spatial_frequency:.4f}, {fit_diagnostics}"
-    )
+    diagnostics = [
+        f"reference {reference_dir.name}",
+        "model MCML",
+        f"pattern freq {frequency}",
+        f"spatial freq {spatial_frequency:.4f}",
+    ]
+    if demod_diagnostics:
+        diagnostics.append(demod_diagnostics)
+    diagnostics.append(fit_diagnostics)
+    return metrics, "; ".join(diagnostics)
 
 
 def _prepare_measurement_directory(app: Any, sequence: list[RealtimePattern]) -> None:
@@ -297,6 +330,39 @@ def _prepare_measurement_directory(app: Any, sequence: list[RealtimePattern]) ->
         Path(app.current_directory).mkdir(parents=True, exist_ok=True)
         for color in SFDI_COLORS:
             (Path(app.current_directory) / color).mkdir(parents=True, exist_ok=True)
+
+
+def _capture_sequence_with_offset(sequence: list[RealtimePattern]) -> list[RealtimePattern]:
+    if FRAME_SAVE_OFFSET <= 0:
+        return list(sequence)
+    return list(sequence) + [sequence[-1]] * FRAME_SAVE_OFFSET
+
+
+def _save_pattern_for_capture(
+    sequence: list[RealtimePattern],
+    capture_index: int,
+) -> RealtimePattern | None:
+    save_index = capture_index - FRAME_SAVE_OFFSET
+    if save_index < 0 or save_index >= len(sequence):
+        return None
+    return sequence[save_index]
+
+
+def _set_exposure_for_pattern(
+    app: Any,
+    pattern: RealtimePattern,
+    exposure_state: dict[str, float],
+) -> None:
+    if not USE_LEGACY_RED_EXPOSURE:
+        return
+
+    target_legacy_ms = LEGACY_RED_EXPOSURE_MS if pattern.color == "red" else LEGACY_GREEN_EXPOSURE_MS
+    if np.isclose(exposure_state.get("legacy_ms", -1.0), target_legacy_ms, rtol=0, atol=1e-9):
+        return
+
+    app.thor_camera.change_exposition(target_legacy_ms)
+    exposure_state["legacy_ms"] = target_legacy_ms
+    exposure_state["value"] = float(getattr(app.thor_camera, "exposure", app.exposure))
 
 
 def _show_projector_pattern(app: Any, pattern: RealtimePattern) -> None:
@@ -392,6 +458,63 @@ def _get_mcml_model(model_cls: Any, spatial_frequency: float) -> Any:
     if cache_key not in _MODEL_CACHE:
         _MODEL_CACHE[cache_key] = model_cls(spatial_frequencies=[0, spatial_frequency])
     return _MODEL_CACHE[cache_key]
+
+
+def _show_demod_diagnostics(raw_demod: Any, reference_demod: Any) -> str | None:
+    if not SHOW_DEMOD_DIAGNOSTICS:
+        return None
+
+    try:
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(
+            len(SFDI_COLORS),
+            4,
+            figsize=(10, 5),
+            num="SFDI demod diagnostics",
+        )
+        columns = (
+            (raw_demod, "raw", 0, "MDC"),
+            (raw_demod, "raw", 1, "MAC"),
+            (reference_demod, "ref", 0, "MDC"),
+            (reference_demod, "ref", 1, "MAC"),
+        )
+
+        for color_index, color in enumerate(SFDI_COLORS):
+            for column_index, (stack, stack_name, frequency_index, component_name) in enumerate(columns):
+                axis = axes[color_index][column_index]
+                image = stack.data[color_index, frequency_index].astype(float)
+                vmin, vmax = _image_percentile_limits(image)
+                axis.imshow(image.T, cmap="gray", vmin=vmin, vmax=vmax)
+                axis.set_title(
+                    f"{color} {stack_name} {component_name}\nmed={_finite_median(image):.4g}",
+                    fontsize=9,
+                )
+                axis.axis("off")
+
+        fig.tight_layout()
+        plt.show(block=False)
+        plt.pause(0.001)
+        return "demod diagnostics shown"
+    except Exception as exc:
+        return f"demod diagnostics unavailable: {exc}"
+
+
+def _image_percentile_limits(image: np.ndarray) -> tuple[float | None, float | None]:
+    finite = image[np.isfinite(image)]
+    if finite.size == 0:
+        return None, None
+    vmin, vmax = np.nanpercentile(finite, [1, 99])
+    if np.isclose(vmin, vmax):
+        return None, None
+    return float(vmin), float(vmax)
+
+
+def _finite_median(image: np.ndarray) -> float:
+    finite = image[np.isfinite(image)]
+    if finite.size == 0:
+        return float("nan")
+    return float(np.nanmedian(finite))
 
 
 def _apply_roi(data: np.ndarray, roi_fraction: tuple[float, float, float, float]) -> np.ndarray:
