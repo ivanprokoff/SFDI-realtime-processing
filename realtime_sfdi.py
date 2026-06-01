@@ -757,7 +757,7 @@ def prewarm_sfdi_model(patterns: Mapping[Any, Any]) -> None:
         if m:
             frequencies.add(int(m.group("freq")))
 
-    for freq in frequencies:
+    for freq in sorted(frequencies, reverse=True)[:3]:
         try:
             _get_mcml_model(MCML_model, _pattern_frequency_to_spatial(freq))
         except Exception:
