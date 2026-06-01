@@ -110,6 +110,27 @@ class App(customtkinter.CTk):
         self.text_box = self.log_frame.textbox
         self.log_frame.grid(row=0, column=0)
 
+        """
+          Hemoglobin display
+        """
+        hemo_container = customtkinter.CTkFrame(self, width=40, corner_radius=0)
+        hemo_container.grid(row=2, column=2, columnspan=1, pady=[0, 10], padx=20, sticky='nswe')
+
+        customtkinter.CTkLabel(
+            hemo_container,
+            text="HEMOGLOBIN",
+            text_color="red",
+            font=customtkinter.CTkFont(size=18, weight="bold"),
+        ).grid(row=0, column=0, padx=10, pady=(10, 2))
+
+        self.hemo_value_label = customtkinter.CTkLabel(
+            hemo_container,
+            text="—",
+            text_color="red",
+            font=customtkinter.CTkFont(size=28, weight="bold"),
+        )
+        self.hemo_value_label.grid(row=1, column=0, padx=10, pady=(2, 10))
+
         self.sfdi_plot_history = {
             'green': {'mua': [], 'mus': []},
             'red': {'mua': [], 'mus': []},
@@ -331,6 +352,18 @@ class App(customtkinter.CTk):
                 if value is not None:
                     self.sfdi_plot_history[color][parameter].append(value)
         self._redraw_sfdi_plots()
+
+        mua_green = metrics.get('green', {}).get('mua')
+        mua_red = metrics.get('red', {}).get('mua')
+        if mua_green is not None and mua_red is not None:
+            self.update_hemoglobin(mua_green, mua_red)
+
+    def compute_hemoglobin(self, mua_green: float, mua_red: float) -> float:
+        return (mua_green + mua_red) / 2.0
+
+    def update_hemoglobin(self, mua_green: float, mua_red: float) -> None:
+        value = self.compute_hemoglobin(mua_green, mua_red)
+        self.hemo_value_label.configure(text=f"{value:.4f}")
 
     def _redraw_sfdi_plots(self):
         if not getattr(self, 'sfdi_canvas', None):
