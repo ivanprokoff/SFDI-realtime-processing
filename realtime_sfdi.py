@@ -329,7 +329,9 @@ def _prepare_measurement_directory(app: Any, sequence: list[RealtimePattern]) ->
         for pattern in sequence
     ):
         app.patient_entry.configure(state="normal")
-        app.patient_entry.insert("end", datetime.now().strftime("_%H-%M-%S"))
+        base = re.sub(r"_\d{2}-\d{2}-\d{2}$", "", app.patient_entry.get())
+        app.patient_entry.delete(0, "end")
+        app.patient_entry.insert(0, base + datetime.now().strftime("_%H-%M-%S"))
         external_functions.create_patient_directory(app.patient_entry.get(), modes=["SFDI"])
         app.renew_current_directory("SFDI")
         Path(app.current_directory).mkdir(parents=True, exist_ok=True)
