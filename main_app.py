@@ -15,7 +15,7 @@ import csv
 from datetime import datetime
 import os
 import time
-from realtime_sfdi import roi_rect_on_preview, run_realtime_sfdi_cycle
+from realtime_sfdi import prewarm_sfdi_model, roi_rect_on_preview, run_realtime_sfdi_cycle
 
 try:
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -84,8 +84,10 @@ class App(customtkinter.CTk):
         self.pattern_factors = [0.42, 0.54, 0.62]
         self.geometry('%dx%d+%d+%d' % (1520, 900, 0, 0))
 
+        self.auto_capture = False
         self.camera = Camera(self)
         self.thor_camera = Thorcam(self)
+        self.after(1000, lambda: prewarm_sfdi_model(self.patterns))
 
         """
         SIDEBAR FRAME
@@ -406,6 +408,22 @@ class App(customtkinter.CTk):
     def begin_sfdi(self):
         """Runs one short realtime SFDI cycle."""
         return run_realtime_sfdi_cycle(self)
+
+    def begin_auto_sfdi(self):
+        """Toggle auto-capture mode (one cycle every 10 seconds)."""
+        self.auto_capture = not self.auto_capture
+        label = "Auto: ON" if self.auto_capture else "Auto: OFF"
+        self.tabview.auto_sfdi_button.configure(text=label)
+        if self.auto_capture:
+            self._auto_sfdi_loop()
+
+    def _auto_sfdi_loop(self):
+        if not self.auto_capture:
+            return
+        external_functions.create_patient_directory(self.patient_entry.get())
+        self.renew_current_directory()
+        run_realtime_sfdi_cycle(self)
+        self.after(10000, self._auto_sfdi_loop)
 
     def begin_full_sfdi(self):
         """A loop for pattern translation to projector, taking thorcam photos and

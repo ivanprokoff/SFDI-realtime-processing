@@ -738,3 +738,27 @@ def _ensure_sfdi_fitter_on_path() -> None:
 def _log(app: Any, message: str) -> None:
     if hasattr(app, "log_frame"):
         app.log_frame.insert_log("SFDIStatus", message)
+
+
+def prewarm_sfdi_model(patterns: Mapping[Any, Any]) -> None:
+    """Pre-initialize MCML model cache so first capture doesn't stall."""
+    try:
+        _ensure_sfdi_fitter_on_path()
+        from sfdi_fitter.fitter import MCML_model
+    except Exception:
+        return
+
+    frequencies: set[int] = set()
+    for key in patterns:
+        if not isinstance(key, tuple) or len(key) != 2:
+            continue
+        _, stem = key
+        m = _PATTERN_RE.match(str(stem))
+        if m:
+            frequencies.add(int(m.group("freq")))
+
+    for freq in frequencies:
+        try:
+            _get_mcml_model(MCML_model, _pattern_frequency_to_spatial(freq))
+        except Exception:
+            pass

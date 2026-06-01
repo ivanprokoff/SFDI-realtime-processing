@@ -249,15 +249,23 @@ class TabWindow(customtkinter.CTkTabview):
         self.brightness_button.grid(row=4, column=0, padx=(20, 20), pady=(10, 10), sticky="nsew")
 
         self.zhang_var = customtkinter.BooleanVar(value=parent.use_zhang)
-
         self.zhang_switch = customtkinter.CTkSwitch(
-            master=self.tab("SFDI"),  # Обязательно указываем master=self.tab("SFDI")
+            master=self.tab("SFDI"),
             text="Zhang patterns",
             variable=self.zhang_var,
             command=self.parent.toggle_zhang
         )
-        # Ставим его на следующий ряд
-        self.zhang_switch.grid(row=5, column=0, padx=(20, 20), pady=(10, 10), sticky="nsew")
+        # zhang_switch скрыт из UI, функционал сохранён через parent.use_zhang / toggle_zhang
+
+        self.auto_sfdi_button = customtkinter.CTkButton(
+            master=self.tab("SFDI"),
+            fg_color="transparent",
+            text_color=("gray10", "#DCE4EE"),
+            text="Auto: OFF",
+            border_width=1,
+            command=parent.begin_auto_sfdi,
+        )
+        self.auto_sfdi_button.grid(row=5, column=0, padx=(20, 20), pady=(10, 10), sticky="nsew")
 
     def fill_entry(self):
         """Fills the exposition entry """
